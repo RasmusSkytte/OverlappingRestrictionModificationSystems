@@ -1,3 +1,4 @@
+from ast import Raise
 import numpy as np
 import pandas as pd
 import networkx as nx
@@ -7,9 +8,12 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 import pickle
 import os
 import operator
+import copy
 import warnings
-from tqdm import tqdm, trange
+from tqdm import tqdm
 from numba import jit
+
+from networkx.algorithms import bipartite
 
 from itertools import product
 from functools import reduce
@@ -17,6 +21,7 @@ from functools import reduce
 import scipy
 import scipy.io
 from scipy.integrate import solve_ivp
+from scipy import sparse
 
 # Set random seed
 np.random.seed(0)
@@ -374,8 +379,8 @@ def simulate_original_model(Alpha, Beta, Eta, Delta, C, T, S, f, lb, ub, iterati
     B_samples = []
 
     # Define filenames
-    f_checkpoint = '{0}_{2}.{1}'.format(*fname.rsplit('.', 1) + ['checkpoint'])
-    f_log        = '{0}_{2}.{1}'.format(*fname.rsplit('.', 1) + ['status']).replace('.pkl','.txt')
+    fname_checkpoint = '{0}_{2}.{1}'.format(*fname.rsplit('.', 1) + ['checkpoint'])
+    fname_log        = '{0}_{2}.{1}'.format(*fname.rsplit('.', 1) + ['status']).replace('.pkl','.txt')
 
     # Main loop
     for i in tqdm(range(iterations), leave=False, disable=disable) :
@@ -445,15 +450,15 @@ def simulate_original_model(Alpha, Beta, Eta, Delta, C, T, S, f, lb, ub, iterati
 
         # Store a checkpoint
         if (i+1) % 100 == 0 :
-            pickle_write(f_checkpoint, nRM, bacteria, phages, diversity, [], mRM, gamma, omega, age, B_samples, C, Alpha, Beta, Delta, T, lb, ub, S, f, iterations, sampleTimes)
+            pickle_write(fname_checkpoint, nRM, bacteria, phages, diversity, [], mRM, gamma, omega, age, B_samples, C, Alpha, Beta, Delta, T, lb, ub, S, f, iterations, sampleTimes)
 
-            with open(f_log, 'w') as log_file :
+            with open(fname_log, 'w') as log_file :
                 log_file.write(f'status: {100*(i+1)/iterations:.1f} %')
 
 
     # Cleanup
-    os.remove(f_checkpoint)
-    os.remove(f_log)
+    os.remove(fname_checkpoint)
+    os.remove(fname_log)
 
     return B_end, P_end, diversity[-1], bacteria, phages, diversity, mRM, gamma, omega, B_samples, nRM, age, gamma_all, omega_all
 
@@ -464,7 +469,7 @@ def simulate_extended_model(Alpha, Beta, Eta, Delta, C, T, S, RMs, f, lb, ub, it
     cost    = 1 - f * np.random.uniform(size = len(RMs))
 
     # Prepare empty lists
-    B = []      # List of bacteria
+    B     = [] # List of bacteria
     B_all = []
 
     age   = np.array([])
@@ -483,90 +488,99 @@ def simulate_extended_model(Alpha, Beta, Eta, Delta, C, T, S, RMs, f, lb, ub, it
 
 
     # Define filenames
-    f_checkpoint = '{0}_{2}.{1}'.format(*fname.rsplit('.', 1) + ['checkpoint'])
-    f_log        = '{0}_{2}.{1}'.format(*fname.rsplit('.', 1) + ['status']).replace('.pkl','.txt')
+    fname_checkpoint = '{0}_{2}.{1}'.format(*fname.rsplit('.', 1) + ['checkpoint'])
+    fname_log        = '{0}_{2}.{1}'.format(*fname.rsplit('.', 1) + ['status']).replace('.pkl','.txt')
 
     # Main loop
-    for i in tqdm(range(iterations), leave=False, disable=disable) :
+    with open(fname_log, 'w') as f_log :
+        with tqdm(total=iterations, file=f_log, maxinterval=300) as pbar :
+            for i in range(iterations) :
 
-        # Draw one more species
-        l = len(B)
-        B = generate_species_extended(B, S, RMs)
-        B_all.extend([b for b in B[l:] if b not in B_all])
+                # Draw one more species
+                l = len(B)
+                B = generate_species_extended(B, S, RMs)
+                B_all.extend([b for b in B[l:] if b not in B_all])
 
-        # Store the age
-        age = np.append(age, np.zeros(len(B) - len(age)))
+                # Store the age
+                age = np.append(age, np.zeros(len(B) - len(age)))
 
-        # Count the number of species
-        nB = len(B)
-        nP = len(P)
+                # Count the number of species
+                nB = len(B)
+                nP = len(P)
 
-        # Set starting conditions
-        if i == 0 :
-            x0 = np.ones((1+nP)*nB) # Everyone starts with a population of 1
-        else :
-            b = np.ones(nB-np.sum(I)) # New bacteria and phages start with a population of 1
-            x0 = np.concatenate((y[:np.sum(I)], b))
-            for p in range(nP) :
-                x0 = np.concatenate((x0, np.abs(y[(p+1)*np.sum(I):(p+2)*np.sum(I)]), b))
+                # Set starting conditions
+                if i == 0 :
+                    x0 = np.ones((1+nP)*nB) # Everyone starts with a population of 1
+                else :
+                    b = np.ones(nB-np.sum(I)) # New bacteria and phages start with a population of 1
+                    x0 = np.concatenate((y[:np.sum(I)], b))
+                    for p in range(nP) :
+                        x0 = np.concatenate((x0, np.abs(y[(p+1)*np.sum(I):(p+2)*np.sum(I)]), b))
 
-        # Set tolerances
-        rtols = [1e-3, 1e-4]
-        atols = [1e-6, 1e-7]
+                # Set tolerances
+                rtols = [1e-3, 1e-4]
+                atols = [1e-6, 1e-7]
 
-        for rtol, atol in zip(rtols, atols) :
+                for rtol, atol in zip(rtols, atols) :
 
-            # Run dynamics
-            B_end, P_end, y, _, _ = dynamical_system('Extended', B, P, omega_0=omega_0, cost=cost, params=(Alpha, Beta, Eta, Delta, C, T), x0=x0, solver=solver, rtol=rtol, atol=atol)
+                    # Run dynamics
+                    B_end, P_end, y, _, _ = dynamical_system('Extended', B, P, omega_0=omega_0, cost=cost, params=(Alpha, Beta, Eta, Delta, C, T), x0=x0, solver=solver, rtol=rtol, atol=atol)
 
-            if np.all(B_end < C) :
-                break
+                    if np.all(B_end < C) :
+                        break
 
-            print('Running again with smaller tolerances')
+                    print('Running again with smaller tolerances')
 
-        # Apply threshold of survival
-        I = B_end > 1
+                # Apply threshold of survival
+                I = B_end > 1
 
-        # Ignore species below threshold
-        B_end = B_end[I]
-        P_end = P_end[:, I]
+                # Ignore species below threshold
+                B_end = B_end[I]
+                P_end = P_end[:, I]
 
-        # Store data
-        diversity[i] = np.sum(I)
-        bacteria[i]  = np.sum(B_end)
-        phages[i]    = np.sum(P_end)
-        mRM[i]       = np.mean(list(map(len, B)))
+                # Store data
+                diversity[i] = np.sum(I)
+                bacteria[i]  = np.sum(B_end)
+                phages[i]    = np.sum(P_end)
+                mRM[i]       = np.mean(list(map(len, B)))
 
-        # Remove the dead species
-        y = y[np.tile(I, 1+nP), -1]
-        B = [b for i, b in zip(I, B) if i]
-        age = age[I]
+                # Remove the dead species
+                y = y[np.tile(I, 1+nP), -1]
+                B = [b for i, b in zip(I, B) if i]
+                age = age[I]
 
-        # Increase the age
-        age += 1
-
-
-        # Compute the overlap measure
-        Bf = flatten_list(B)
-        if len(B) > 1 :
-            _, RMs_counts = np.unique(Bf, return_counts=True)
-            overlap[i] = np.mean((RMs_counts - 1) / (diversity[i]-1))
+                # Increase the age
+                age += 1
 
 
-        # Sample B if required
-        if np.isin(i, sampleTimes) :
-            B_samples.append(B)
+                # Compute the overlap measure
+                Bf = flatten_list(B)
+                if len(B) > 1 :
+                    _, RMs_counts = np.unique(Bf, return_counts=True)
+                    overlap[i] = np.mean((RMs_counts - 1) / (diversity[i]-1))
 
-        # Store a checkpoint
-        if (i+1) % 100 == 0 :
-            pickle_write(f_checkpoint, B, bacteria, phages, diversity, overlap, mRM, cost, omega_0, age, B_samples, C, Alpha, Beta, Delta, T, lb, ub, S, f, iterations, sampleTimes)
 
-            with open(f_log, 'w') as log_file :
-                log_file.write(f'status: {100*(i+1)/iterations:.1f} %')
+                # Sample B if required
+                if np.isin(i+1, sampleTimes) :
+                    B_samples.append(B)
+
+                # Store a checkpoint
+                if (i+1) % 100 == 0 :
+                    pickle_write(fname_checkpoint, B, bacteria, phages, diversity, overlap, mRM, cost, omega_0, age, B_samples, C, Alpha, Beta, Delta, T, lb, ub, S, f, iterations, sampleTimes)
+
+                    f_log.truncate(0)
+                    f_log.seek(0)
+                    pbar.update(100)
+                    f_log.flush()
+                    os.fsync(f_log.fileno())
+
+                    #with open(fname_log, 'w') as log_file :
+                    #    log_file.write(f'status: {100*(i+1)/iterations:.1f} %')
+
 
     # Cleanup
-    os.remove(f_checkpoint)
-    os.remove(f_log)
+    os.remove(fname_checkpoint)
+    os.remove(fname_log)
 
     return B, P, B_end, P_end, diversity[-1], bacteria, phages, diversity, mRM, cost, omega_0, B_samples, overlap, age, B_all
 
@@ -630,21 +644,110 @@ def compute_overlap_measure(A_RMs, A_ij) :
     c_RMs = np.diag(A_RMs)
     return c_RMs / (np.size(A_ij, 0) - 1)  # p_i = # occurances / # number of other strains
 
-def compute_unique_RM_fraction(B) :
+def compute_unique_RM_fraction(B, f_metric = 'strict', **kwargs) :
 
-    B_tuples = set([tuple(b) for b in B])  # Cunvert to tuples so we can use set
-    return np.mean([0 if np.isin(b, flatten_list(list(B_tuples - set([tuple(b)])))).any() else 1 for b in B_tuples])
+    if f_metric == 'strict' :
+        return np.mean([0 if np.isin(b, flatten_list(list(set(B) - set([b])))).any() or len(b) == 0 else 1 for b in B])
 
-def generate_random_sample(A_RMs, A_ij, conserve_RM_degree = False) :
+    elif f_metric == 'soft' :
+        return np.mean([np.mean(~np.isin(b, flatten_list(list(set(B) - set([b]))))) if len(b) > 0 else 0 for b in B])
 
-    # Generate the available RM systems
-    RMs = np.arange(len(A_RMs))
+    elif f_metric == 'original' :
+        return np.mean([0 if np.isin(b, flatten_list(list(set(B) - set([b])))).all() or len(b) == 0 else 1 for b in B])
 
-    # Construct the random strain generator
-    B_generator = lambda n, RMs : np.random.choice(RMs, size=n, replace=False)
+    else :
+        raise ValueError('Metric is not defined')
 
-    j = 0
-    while j < 10000 :
+
+def generate_random_sample(Bs, conserve_RM_degree = False, max_subattempts = 1_000, method = 'hit_miss') :
+
+    # Choose the algorithn : if conserving RM degree, use linkswapping
+    if conserve_RM_degree and method == 'linkswapping' :
+
+        # Generate new swapped network
+        Bs_s = copy.deepcopy(Bs)
+
+        # Prepare random choice
+        inds = np.arange(len(Bs))
+        probs = np.array(list(map(len, Bs_s))).astype(float)
+        probs /= probs.sum()
+
+        # Attempt to swap links max_subattempts times
+        for _ in range(max_subattempts) :
+
+            # Choose a pair to swap
+            i, j = np.random.choice(inds, p = probs, size = 2, replace = False)
+
+            # If one has no RM systems, abandon this swap
+            if (len(Bs_s[i]) == 0) or (len(Bs_s[j]) == 0) :
+                continue
+
+            # Choose random RM systems to swap
+            ii = np.random.randint(0, len(Bs_s[i]))
+            jj = np.random.randint(0, len(Bs_s[j]))
+
+            # Check that these are not already present
+            if (Bs_s[i][ii] in Bs_s[j]) or (Bs_s[j][jj] in Bs_s[i]) :
+                continue
+
+            # Swap links to generate new strains
+            Bs_i = tuple(sorted([b for iii, b in enumerate(Bs_s[i]) if iii != ii] + [Bs_s[j][jj]]))
+            Bs_j = tuple(sorted([b for jjj, b in enumerate(Bs_s[j]) if jjj != jj] + [Bs_s[i][ii]]))
+
+            # Check that these strains are not already present
+            Bs_ss = [b for k, b in enumerate(Bs_s) if not k in (i, j)]
+
+
+            # If present, abandon this swap
+            if (Bs_i in Bs_ss) or (Bs_j in Bs_ss) :
+                continue
+
+            # Else add the new pairs
+            Bs_ss += [Bs_i, Bs_j]
+
+            # Accept network
+            Bs_s = Bs_ss
+
+        # Check if generated network is valid
+        if len(Bs_s) != len(np.unique([str(b) for b in Bs_s])) :
+            return
+
+        return list(sorted(Bs_s))
+
+    elif conserve_RM_degree and method == 'configuration_model' :
+
+        # Get the matrices for the networks
+        A_ij, _, _ = compute_network(Bs)
+
+        G = bipartite.generators.configuration_model(A_ij.sum(axis = 1).astype(int), A_ij.sum(axis = 0).astype(int))
+
+        # Allocate empty
+        Bs_s = [[] for _ in Bs]
+
+        for edge in G.edges :
+            b, r, _ = edge
+            r -= len(Bs) - 1
+            Bs_s[b].append(r)
+
+
+        Bs_s = [sorted(tuple(b)) for b in Bs_s]
+
+        # Check if generated network is valid
+        if len(Bs_s) != len(np.unique([str(b) for b in Bs_s])) :
+            return
+
+        return list(sorted(Bs_s))
+
+    elif method == 'hit_miss' :
+
+        # Get the matrices for the networks
+        A_ij, A_RMs, _ = compute_network(Bs)
+
+        # Generate the available RM systems
+        RMs = np.arange(len(A_RMs))
+
+        # Construct the random strain generator
+        B_generator = lambda n, RMs : np.random.choice(RMs, size=n, replace=False)
 
         # Reset the B degree
         nRM_tmp = A_ij.sum(axis=1).astype(int).tolist()
@@ -664,7 +767,7 @@ def generate_random_sample(A_RMs, A_ij, conserve_RM_degree = False) :
             if nRM_tmp[I] > np.sum(RMs_degree > 0) :    # The strain cannot be generated
                 break
 
-            new_B = B_generator(nRM_tmp[I], RMs[RMs_degree > 0]).tolist()
+            new_B = tuple(sorted(B_generator(nRM_tmp[I], RMs[RMs_degree > 0])))
 
             k += 1
             if new_B not in B_rand :
@@ -675,59 +778,103 @@ def generate_random_sample(A_RMs, A_ij, conserve_RM_degree = False) :
                     for r in new_B :
                         RMs_degree[r] -= 1
 
-            if k > 1000 :
-                break
+            if k >= max_subattempts :
+                return
 
         if len(B_rand) == len(A_ij) :
-            return B_rand
-        j += 1
+            return sorted(list(B_rand))
 
-    raise ValueError('Random network not generated')
+    else :
+        raise ValueError(f'Method {method} for generating random samples not defined!')
 
-def get_metrics_of_real_network(Bs) :
+def get_metrics_of_real_network(Bs, **kwargs) :
 
-    A_ij_s, A_RMs_s, _ = compute_network(Bs)
+    A_ij_s, _, _ = compute_network(Bs)
+
+    # Create a networkx instance to compute clustering
+    G = bipartite.from_biadjacency_matrix(sparse.csr_matrix(A_ij_s))
 
     # Get metrics of real network
-    avg_overlap  = np.mean(compute_overlap_measure(A_RMs_s, A_ij_s))
-    RMs_per_B    = A_ij_s.sum(axis=1)
-    avg_degree   = A_RMs_s.sum(axis=1).mean()
-    avg_conn     = np.clip(A_RMs_s, 0, 1).sum(axis=1).mean()
-    f_unique     = compute_unique_RM_fraction(Bs)
-    avg_o_ij     = np.mean(compute_relative_overlaps(A_ij_s, Bs))
+    RMs_per_B         = A_ij_s.sum(axis=1)
+    f_unique          = compute_unique_RM_fraction(Bs, **kwargs)
+    avg_o_ij          = np.mean(compute_relative_overlaps(A_ij_s, Bs))
+    avg_clustering    = bipartite.average_clustering(G)
+    robins_clustering = bipartite.robins_alexander_clustering(G)
+    number_of_cycles  = len(nx.cycle_basis(G))
 
-    return avg_overlap, RMs_per_B, avg_degree, avg_conn, f_unique, avg_o_ij
+    return RMs_per_B, f_unique, avg_o_ij, avg_clustering, robins_clustering, number_of_cycles
 
-def get_metrics_of_random_network(Bs, n_random_sample_size = 1, conserve_RM_degree = False) :
+def get_metrics_of_random_network(Bs, n_random_sample_size = 1, conserve_RM_degree = False, max_attempts = 10_000, method = 'hit_miss', **kwargs) :
 
-    A_ij_s, A_RMs_s, _ = compute_network(Bs)
+    # Generate random networks
+    networks = []
+
+    k = 0
+    while len(networks) < n_random_sample_size :
+
+        B_rand = None
+
+        while B_rand is None :
+
+            # Attempt to generate a random sample
+            B_rand = generate_random_sample(Bs, conserve_RM_degree = conserve_RM_degree, method = method)
+
+            # Add network to list of networks
+            if B_rand is not None :
+
+                # Add network
+                networks.append(B_rand)
+
+                # Filter unique
+                # networks = [list(y) for y in set([tuple(x) for x in networks])]
+
+            # Increment counter and include exit statement
+            k += 1
+            if k >= max_attempts :
+                warnings.warn(f'Not enough network could be not generated ({len(networks)} / {n_random_sample_size})')
+                break
+                #raise ValueError(f'Not enough network could be not generated ({len(networks)} / {n_random_sample_size})')
+
+        # Increment counter and include exit statement
+        if k >= max_attempts :
+            break
+
+
 
     # Prepare output containers for random networks
-    avg_overlap_rand  = []
-    avg_RM_per_B_rand = []
-    avg_degree_rand   = []
-    avg_conn_rand     = []
-    f_unique_rand     = []
-    avg_o_ij_rand     = []
+    avg_RM_per_B_rand      = []
+    f_unique_rand          = []
+    avg_o_ij_rand          = []
+    avg_clustering_rand    = []
+    robins_clustering_rand = []
+    number_of_cycles_rand  = []
 
     # Loop over random runs
-    for _ in trange(n_random_sample_size, leave=False, disable=True) :
-
-        B_rand = generate_random_sample(A_RMs_s, A_ij_s, conserve_RM_degree = conserve_RM_degree)
+    for B_rand in networks :
 
         # Get the associated matrices from the random network
-        A_ij_rand, A_RMs_rand, _ = compute_network(B_rand)   # Diagonal counts occurances of RM system. Off diagnoal counts combinations
+        A_ij_rand, _, _ = compute_network(B_rand)   # Diagonal counts occurances of RM system. Off diagnoal counts combinations
+
+        # Create a networkx instance to compute clustering
+        G = bipartite.from_biadjacency_matrix(sparse.csr_matrix(A_ij_rand))
 
         # Get metrics of random network
-        avg_overlap_rand.append(np.mean(compute_overlap_measure(A_RMs_rand, A_ij_rand)))
         avg_RM_per_B_rand.append(A_ij_rand.sum(axis=1).mean())
-        avg_degree_rand.append(A_RMs_rand.sum(axis=1).mean())
-        avg_conn_rand.append(np.clip(A_RMs_rand, 0, 1).sum(axis=1).mean())
-        f_unique_rand.append(compute_unique_RM_fraction(B_rand))
+        f_unique_rand.append(compute_unique_RM_fraction(B_rand, **kwargs))
         avg_o_ij_rand.append(np.mean(compute_relative_overlaps(A_ij_rand, B_rand)))
+        avg_clustering_rand.append(bipartite.average_clustering(G))
+        robins_clustering_rand.append(bipartite.robins_alexander_clustering(G))
+        number_of_cycles_rand.append(len(nx.cycle_basis(G)))
 
+    if len(networks) == 0 :
+        avg_RM_per_B_rand.append(np.nan)
+        f_unique_rand.append(np.nan)
+        avg_o_ij_rand.append(np.nan)
+        avg_clustering_rand.append(np.nan)
+        robins_clustering_rand.append(np.nan)
+        number_of_cycles_rand.append(np.nan)
 
-    return avg_overlap_rand, avg_RM_per_B_rand, avg_degree_rand, avg_conn_rand, f_unique_rand, avg_o_ij_rand
+    return avg_RM_per_B_rand, f_unique_rand, avg_o_ij_rand, avg_clustering_rand, robins_clustering_rand, number_of_cycles_rand
 
 def plot_network(A_ij, A_RMs, A_Bs, title, network_type='RM', pos=None, color=None, no_labels=False, base_width=1, scaling=1, ax=None, **kwargs) :
 
@@ -802,8 +949,8 @@ def plot_network(A_ij, A_RMs, A_Bs, title, network_type='RM', pos=None, color=No
         fontsize = 18 * scaling
         ax.text(-scale*0.9, 1.5, title, fontsize=1.5*fontsize, fontweight='bold')
 
-        ax.text(-scale*0.9, 1.3, f'# RM = {len(A_RMs)}',     fontsize=fontsize)
-        ax.text(-scale*0.9, 1.2, f'# strains = {len(A_ij)}', fontsize=fontsize)
+        ax.text(-scale*0.9, 1.3, f'# strains = {len(A_ij)}', fontsize=fontsize)
+        ax.text(-scale*0.9, 1.2, f'# RM = {len(A_RMs)}',     fontsize=fontsize)
 
         ax.text(0, 1.3, f'$\langle$# RM$\\rangle$ = {A_ij.sum(axis=1).mean().round(2)}', fontsize=fontsize)
         ax.text(0, 1.2, f'$\langle$p$\\rangle$ = {overlap_s.mean().round(3)}',           fontsize=fontsize)
@@ -819,7 +966,7 @@ def plot_network(A_ij, A_RMs, A_Bs, title, network_type='RM', pos=None, color=No
 
     return fig
 
-def plot_bipartite_network(B, A_ij, A_RMs, title, scaling=1, ax=None) :
+def plot_bipartite_network(B, A_ij, A_RMs, title, scaling=1, title_scale=1.5, ax=None, **kwargs) :
 
     mar = 0.4
     scale = 1.2
@@ -856,12 +1003,12 @@ def plot_bipartite_network(B, A_ij, A_RMs, title, scaling=1, ax=None) :
 
     fontsize = 18 * scaling
     dy = 0.1*(1 + scaling)
-    ax.text(-scale*0.9, 1+3.3*dy, title, fontsize=1.5*fontsize, fontweight='bold')
-    ax.text(-scale*0.9, 1+2*dy, f'# RM = {len(A_RMs)}',     fontsize=fontsize)
-    ax.text(0,          1+2*dy, f'# strains = {len(A_ij)}', fontsize=fontsize)
+    ax.text(-scale*0.9, 1+3.3*dy, title, fontsize=title_scale*fontsize, style='italic')
+    ax.text(-scale*0.9, 1+2*dy, f'# strains = {len(A_ij)}',     fontsize=fontsize)
+    ax.text( scale*0.2, 1+2*dy, f'# RM = {len(A_RMs)}', fontsize=fontsize)
 
-    ax.text(-scale*0.9, 1+1*dy, f'$\langle$# RM$\\rangle$ = {A_ij.sum(axis=1).mean().round(2)}', fontsize=fontsize)
-    ax.text(0,          1+1*dy, f'$f^u$ = {compute_unique_RM_fraction(B):.2f}', fontsize=fontsize)
+    ax.text(-scale*0.9, 1+0.8*dy, f'$\langle$# RM$\\rangle$ = {A_ij.sum(axis=1).mean().round(2)}', fontsize=fontsize)
+    ax.text( scale*0.2, 1+0.8*dy, f'$f^u$ = {compute_unique_RM_fraction(B, **kwargs):.2f}', fontsize=fontsize)
 
 
     ax.set_xlim(-scale, scale)
@@ -939,6 +1086,10 @@ def plot_summery_figure(axes, names, data, disable_significance=None, plot_names
         #p_vals = [1.0, 0.317, 0.046, 0.003]
         for ax_id, (sample, ax) in enumerate(zip(samples, axes)) :
 
+            # Handle nan case seperately
+            if np.all(np.isnan(sample)) :
+                sample = np.full_like(samples[-1], fill_value=np.nan)
+
             err = np.std(sample)
 
             if err > 0 :
@@ -960,7 +1111,7 @@ def plot_summery_figure(axes, names, data, disable_significance=None, plot_names
                     if err > 0 :
                         # Create significance label
                         p = scipy.special.erfc(abs(z) / np.sqrt(2))
-                        sig = '∗' * (np.argwhere(p < p_vals)[-1][-1])
+                        sig = '∗' * (np.argwhere(p <= p_vals)[-1][-1])
                     else :
                         sig = '+'
 
@@ -992,7 +1143,7 @@ def plot_summery_figure(axes, names, data, disable_significance=None, plot_names
 
         if plot_names and ax_id == 0 :
             ax.xaxis.tick_top()
-            ax.set_xticklabels([names[i] for i  in I], rotation='vertical', ha='center', fontsize='small')
+            ax.set_xticklabels([names[i] for i  in I], rotation='vertical', ha='center', fontsize='small', style='italic')
 
         else :
             ax.tick_params(labelbottom=False, bottom=False)
@@ -1095,7 +1246,7 @@ def add_figure_labels(labels, axes, dx=-0.05, dy=0.05) :
         ax_label.set_axis_off()
         ax_label.text(1, 1, label, label_args())
 
-def load_sequence_data() :
+def load_sequence_data(grouping = 'genus') :
 
     # Load data
     data_path = os.path.join(get_path('data'), 'Fig2')
@@ -1103,9 +1254,11 @@ def load_sequence_data() :
     data_taxonomy = pd.read_csv(os.path.join(data_path, 'data_taxonomy.csv'), index_col=0)
     data_motifs = pd.read_csv(os.path.join(data_path, 'motifs.csv'))
 
-    # Group by 'genus'
-    s = data_taxonomy.genus_id.values
-    genus_id_to_name = pd.Series(index=s, data=data_taxonomy.genus.values).drop_duplicates()
+    # Choose data at group level
+    s = data_taxonomy[grouping + '_id'].values
+    g = data_taxonomy[grouping].values
+
+    group_id_to_name = pd.Series(index=s, data=g).drop_duplicates()
 
     # Ensure the data is sorted
     sort_index = np.argsort(s)
@@ -1113,25 +1266,26 @@ def load_sequence_data() :
     A_ij = A_ij[sort_index, :]
 
     # Perform sanity checks
-    for genus_id in data_taxonomy.genus_id.unique() :
-        subset = data_taxonomy.loc[data_taxonomy['genus_id'] == genus_id]
+    for g_id in np.unique(s) :
+        subset = data_taxonomy.loc[data_taxonomy[grouping + '_id'] == g_id]
 
         if len(subset.subgroup.unique()) > 1 :
-            raise warnings.warn(f'The genus "{subset.genus.unique()}" has several sup-groups')
+            print(subset)
+            raise warnings.warn(f'The group "{subset[grouping].unique()}" has several sup-groups')
 
         if len(subset.group.unique()) > 1 :
-            raise warnings.warn(f'The genus "{subset.genus.unique()}" has several groups')
+            raise warnings.warn(f'The group "{subset[grouping].unique()}" has several groups')
 
-    return A_ij, s, data_taxonomy, data_motifs, genus_id_to_name
+    return A_ij, s, data_taxonomy, data_motifs, group_id_to_name
 
-def iter_sequence_data(A_ij, s, data_taxonomy, treshold = 15, tqdm_disable=False) :
+def iter_sequence_data(A_ij, s, data_taxonomy, grouping = 'genus', treshold = 15, tqdm_disable=False) :
 
     # Loop over subsets
-    for strain_id in tqdm(np.unique(s), disable=tqdm_disable) :
+    for grouping_id in tqdm(np.unique(s), disable=tqdm_disable) :
 
         # Locate the start and size of the subset
-        idx = np.argmax(s == strain_id) # Start
-        ns  = np.sum(s == strain_id)    # Size
+        idx = np.argmax(s == grouping_id) # Start
+        ns  = np.sum(s == grouping_id)    # Size
 
         # Extract the subset
         A_ij_s = A_ij[idx:idx+(ns-1), :]
@@ -1146,21 +1300,21 @@ def iter_sequence_data(A_ij, s, data_taxonomy, treshold = 15, tqdm_disable=False
         Bs = []
         for a_ij in A_ij_s_tmp :
             Bs.append(tuple(np.where(a_ij > 0)[0])) # Here, use tuple instead of lists
-
+        Bs = list(sorted(Bs))
 
         # Get the name of the subset
-        genus = data_taxonomy.genus[data_taxonomy.genus_id == strain_id][0]
+        group_name = data_taxonomy[grouping][data_taxonomy[grouping + '_id'] == grouping_id][0]
 
         # Filter out small sample sets
         if np.size(A_ij_s, 0) < treshold :
             continue
 
 
-        yield strain_id, A_ij_s, Bs, genus
+        yield grouping_id, A_ij_s, Bs, group_name
 
 def iter_simulation_data(n_sims = 5, n_seeds = 6, n_its = 6, tqdm_disable = False) :
 
-    for simulation_id, seed_id, log_iterations in tqdm(product(range(n_sims), range(n_seeds), range(3, n_its+1)), total=n_sims*n_seeds*(n_its-2), disable=tqdm_disable) :
+    for simulation_id, seed_id, log_iterations in tqdm(product(range(n_sims), range(n_seeds), range(n_its+1)), total=n_sims*n_seeds*(n_its+1), disable=tqdm_disable, leave = False, dynamic_ncols=True) :
         yield 50*2**simulation_id, seed_id, log_iterations
 
 def load_reference_data() :
@@ -1176,7 +1330,7 @@ def load_reference_data() :
 
     A_ij = data['A_ij'].astype(int)
     s    = data['s'] - 1
-    genus_id_to_name = pd.Series({ 0 : 'Halobacteria (Roer et al.)', 1 : 'Salmonella (Fullmer et al.)'})
+    genus_id_to_name = pd.Series({ 0 : '$\it{Halobacteria}$ (Fullmer et al.)', 1 : '$\it{Salmonella}$ (Roer et al.)'})
 
     return A_ij, s.flatten(), genus_id_to_name
 
@@ -1205,111 +1359,106 @@ def iter_reference_data(A_ij, s, tqdm_disable=False) :
 
         yield strain_id, A_ij_s, Bs
 
-def analyze_sequence_data(n_random_sample_size = 100, conserve_RM_degree = False) :
+def analyze_sequence_data(grouping = 'genus', n_random_sample_size = 100, conserve_RM_degree = False, **kwargs) :
 
     # Load the sequence data
-    A_ij, s, data_taxonomy, _, genus_id_to_name = load_sequence_data()
+    A_ij, s, data_taxonomy, _, group_id_to_name = load_sequence_data(grouping = grouping)
 
     # Prepare outputs
-    diff_random_overlap = []
-    diff_random_unique  = []
-    diff_random_o_ij    = []
+    diff_random_unique     = []
+    diff_random_o_ij       = []
+    diff_random_clustering = []
+    diff_random_robins     = []
+    diff_random_num_cycles = []
 
-    RMs_abundence       = []
-
-    hist_avg_overlap    = []
-    hist_avg_RM_per_B   = []
-    hist_imag_eig       = []
+    number_of_cycles     = []
+    RMs_abundence        = []
+    average_RM_abundence = []
 
     names = []
 
     # Loop over subsets to data figures
-    for strain_id, _, Bs, _ in iter_sequence_data(A_ij, s, data_taxonomy) :
-
-        # Get the matrices for the networks
-        _, _, A_Bs_s = compute_network(Bs)
+    for group_id, _, Bs, _ in iter_sequence_data(A_ij, s, data_taxonomy, grouping = grouping) :
 
         # Get the metrics from the sequence data
-        avg_overlap, RMs_per_B, _, _, f_unique, avg_o_ij = get_metrics_of_real_network(Bs)
+        RMs_per_B, f_unique, avg_o_ij, avg_clustering, robins_clustering, num_cycles = get_metrics_of_real_network(Bs, **kwargs)
 
         # Get the metrics for the random comparrison
-        avg_overlap_rand, _, _, _, f_unique_rand, avg_o_ij_rand = get_metrics_of_random_network(Bs, n_random_sample_size, conserve_RM_degree = conserve_RM_degree)
+        _, f_unique_rand, avg_o_ij_rand, avg_clustering_rand, robins_clustering_rand, num_cycles_rand = get_metrics_of_random_network(Bs, n_random_sample_size, conserve_RM_degree = conserve_RM_degree, **kwargs)
 
         # Store metric of difference between random distrubution and the sample
-        diff_random_overlap.append(avg_overlap  - np.array(avg_overlap_rand) )
-        diff_random_unique.append( f_unique     - np.array(f_unique_rand)  )
-        diff_random_o_ij.append(   avg_o_ij     - np.array(avg_o_ij_rand)    )
+        diff_random_unique.append(    f_unique          - np.array(f_unique_rand)      )
+        diff_random_o_ij.append(      avg_o_ij          - np.array(avg_o_ij_rand)      )
+        diff_random_clustering.append(avg_clustering    - np.array(avg_clustering_rand))
+        diff_random_robins.append(    robins_clustering - np.array(robins_clustering_rand))
+        diff_random_num_cycles.append(num_cycles        - np.array(num_cycles_rand))
 
+        number_of_cycles.append(num_cycles)
+
+        # Store the RM information
         RMs_abundence.append(RMs_per_B)
-
-        # Store average measures
-        E, _ = scipy.linalg.eig(A_Bs_s)
-        E = np.abs(np.imag(E))
-
-        hist_imag_eig.append(np.sum(E[E>0]) / len(A_Bs_s))
-        hist_avg_RM_per_B.append(RMs_per_B.mean())
-        hist_avg_overlap.append(avg_overlap)
+        average_RM_abundence.append(RMs_per_B.mean())
 
         # Store the names
-        names.append(genus_id_to_name[strain_id])
+        names.append(group_id_to_name[group_id])
 
-    return diff_random_overlap, diff_random_unique, diff_random_o_ij, RMs_abundence, hist_avg_RM_per_B, hist_avg_overlap, hist_imag_eig, names
+    return diff_random_unique, diff_random_o_ij, diff_random_clustering, diff_random_robins, diff_random_num_cycles, number_of_cycles, RMs_abundence, average_RM_abundence, names
 
-def analyze_simulation_data(n_random_sample_size = 10, conserve_RM_degree = False) :
+def analyze_simulation_data(n_random_sample_size = 10, conserve_RM_degree = False, data_path = 'Fig6', **kwargs) :
 
     # Allocate arrays
     names = []
     iters = []
 
     # Define the nunmber of random samples to generate
-    diff_random_overlap = []
-    diff_random_unique  = []
-    diff_random_o_ij    = []
+    diff_random_unique     = []
+    diff_random_o_ij       = []
 
-    RMs_abundence       = []
-
-    hist_avg_overlap    = []
-    hist_avg_RM_per_B   = []
+    RMs_abundence        = []
+    average_RM_abundence = []
 
     # Loop over subsets to generate figures
-    for K, seed_id, log_iterations in tqdm(iter_simulation_data()) :
+    for K, seed_id, log_iterations in iter_simulation_data(**kwargs) :
+
+        # Load the data
+        lname = os.path.join(get_path('data'), data_path, f'RM_{K}_seed_{seed_id}')
+        if os.path.exists(lname + '.mat') :
+
+            data = scipy.io.loadmat(lname + '.mat')
+            Bs = [b[0, :].tolist() for b in data['B_samples'][0, :][log_iterations].flatten().tolist()] # wtf scipy?
+
+        elif os.path.exists(lname + '.pkl') :
+            _, _, _, _, _, _, _, _, _, B_samples, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ = pickle_read(lname + '.pkl')
+            Bs = B_samples[log_iterations]
+
+        else :
+            warnings.warn(f'{lname} is missing!')
+            continue
 
         # Set settings for the run
         names.append(f'RM : {K}, it : 1e{log_iterations}, seed : {seed_id}')
 
-        # Load the data
-        lname = os.path.join(get_path('data'), 'Fig6', f'RM_{K}_seed_{seed_id}.mat')
-        if os.path.exists(lname) :
-            data = scipy.io.loadmat(lname)
-
-        else :
-            raise ValueError(f'{lname} is missing!')
-
-
-        # Get data from the run
-        Bs = [b[0, :].tolist() for b in data['B_samples'][0, :][log_iterations].flatten().tolist()] # wtf scipy?
+        # Convert to tuples and sort
+        Bs = list(sorted([tuple(sorted(b)) for b in Bs]))
 
         # Get the metrics from the simulation
-        avg_overlap, RMs_per_B, _, _, f_unique, avg_o_ij = get_metrics_of_real_network(Bs)
+        RMs_per_B, f_unique, avg_o_ij, _, _, _ = get_metrics_of_real_network(Bs, **kwargs)
 
         # Get the metrics for the random comparrison
-        avg_overlap_rand, _, _, _, f_unique_rand, avg_o_ij_rand = get_metrics_of_random_network(Bs, n_random_sample_size, conserve_RM_degree=conserve_RM_degree)
+        _, f_unique_rand, avg_o_ij_rand, _, _, _ = get_metrics_of_random_network(Bs, n_random_sample_size, conserve_RM_degree=conserve_RM_degree, **kwargs)
 
         # Store metric of difference between random distrubution and the sample
-        diff_random_overlap.append(avg_overlap- np.array(avg_overlap_rand) )
-        diff_random_unique.append( f_unique   - np.array(f_unique_rand)  )
-        diff_random_o_ij.append(   avg_o_ij   - np.array(avg_o_ij_rand)    )
+        diff_random_unique.append(    f_unique       - np.array(f_unique_rand)  )
+        diff_random_o_ij.append(      avg_o_ij       - np.array(avg_o_ij_rand)  )
 
+        # Store the RM information
         RMs_abundence.append(RMs_per_B)
-
-        # Store the measures
-        hist_avg_RM_per_B.append(RMs_per_B.mean())
-        hist_avg_overlap.append(avg_overlap)
+        average_RM_abundence.append(RMs_per_B.mean())
 
         # Store iteration id
         iters.append(log_iterations)
 
-    return diff_random_overlap, diff_random_unique, diff_random_o_ij, RMs_abundence, hist_avg_RM_per_B, hist_avg_overlap, names, iters
+    return diff_random_unique, diff_random_o_ij, RMs_abundence, average_RM_abundence, names, iters
 
 def make_dirs(path) :
     # Prepare the figure folder

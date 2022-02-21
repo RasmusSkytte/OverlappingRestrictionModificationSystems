@@ -127,11 +127,15 @@ data_RM       = data_RM.loc[intersec]
 A_ij = data_RM.to_numpy() > 0
 A_ij = A_ij.astype(int)
 
+# Concatenate genus and species_strain to get unique names
+data_taxonomy['species'] = data_taxonomy['genus'] + ' ' + data_taxonomy['species_strain'].str.split('_').str[0]
+
 # Create unique ID for each stratification
 data_taxonomy['group_id']          = data_taxonomy.groupby('group').grouper.group_info[0]
 data_taxonomy['subgroup_id']       = data_taxonomy.groupby('subgroup').grouper.group_info[0]
 data_taxonomy['genus_id']          = data_taxonomy.groupby('genus').grouper.group_info[0]
 data_taxonomy['species_strain_id'] = data_taxonomy.groupby('species_strain').grouper.group_info[0]
+data_taxonomy['species_id']        = data_taxonomy.groupby('species').grouper.group_info[0]
 
 # Save data
 np.savetxt(base_path+'A_ij.csv', A_ij, delimiter=',', fmt='%d')

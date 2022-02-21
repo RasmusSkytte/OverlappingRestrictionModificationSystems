@@ -47,7 +47,7 @@ for d, (strain_id, A_ij_s, Bs, genus) in enumerate(iter_sequence_data(A_ij, s, d
     _, A_RMs_s, A_Bs_s = compute_network(Bs)
 
     # Get the matrices for the random networks
-    B_rand = generate_random_sample(A_RMs_s, A_ij_s, conserve_RM_degree = conserve_RM_degree())
+    B_rand = generate_random_sample(Bs, conserve_RM_degree = conserve_RM_degree())
     A_ij_rand, A_RMs_rand, _ = compute_network(B_rand)
 
     # Add the plots
@@ -55,20 +55,32 @@ for d, (strain_id, A_ij_s, Bs, genus) in enumerate(iter_sequence_data(A_ij, s, d
     plot_bipartite_network(Bs,     A_ij_s,    A_RMs_s,     genus,       scaling=scaling, ax=ax[0])
     plot_bipartite_network(B_rand, A_ij_rand, A_RMs_rand, 'Null model', scaling=scaling, ax=ax[2])
 
-    plot_network_histogram(compute_relative_overlaps(A_ij_s,    Bs),     bins=bins,               ax=ax[1], xlabel=None, normalized=True, color=plt.cm.Dark2(0))
-    plot_network_histogram(compute_relative_overlaps(A_ij_rand, B_rand), bins=bins, hatch='///',  ax=ax[1], xlabel=None, normalized=True, color='none')
+    pmf = False
+    plot_network_histogram(compute_relative_overlaps(A_ij_s,    Bs),     bins=bins,               ax=ax[1], xlabel=None, normalized=pmf, color=plt.cm.Dark2(0))
+    plot_network_histogram(compute_relative_overlaps(A_ij_rand, B_rand), bins=bins, hatch='///',  ax=ax[1], xlabel=None, normalized=pmf, color='none')
 
-    # Adjust x-position of histogram
+    # Adjust the histogram
     pos = ax[1].get_position()
-    pos.x0 += 0.04
-    pos.x1 += 0.04
+
+    if pmf :
+        pos.x0 += 0.04
+        pos.x1 += 0.04
+
+        ax[1].set_ylim(0, 0.2)
+
+        ax[1].set_ylabel('pmf.', labelpad=5)
+
+    else :
+        pos.x0 += 0.02
+        pos.x1 += 0.02
+
+        ax[1].set_ylabel('', labelpad=5)
+
     ax[1].set_position(pos)
 
     ax[1].set_xlim(0, 1)
-    ax[1].set_ylim(0, 0.2)
     ax[1].set_xticks([])
 
-    ax[1].set_ylabel('pmf.', labelpad=5)
 
     # Adjust the color
     for axis in ['top','bottom','left','right']:

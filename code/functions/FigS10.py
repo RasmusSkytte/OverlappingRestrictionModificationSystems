@@ -1,101 +1,160 @@
 import numpy as np
-import pandas as pd
-
+import scipy
 import matplotlib.pyplot as plt
-import scipy.io
-
 import os
+from tqdm import tqdm
 
-from helpers import make_dirs, get_path, set_rc_params, add_figure_labels
-from helpers import iter_simulation_data, compute_network
-
+from helpers import default_parameters, get_RMs, dynamical_system, make_dirs, get_path, get_solver, set_rc_params, add_figure_labels
 
 set_rc_params()
 
-n_open_triplets = []
-n_closed_triplets = []
-Ks = []
-iterations = []
+# Set seed
+np.random.seed(60)
 
-# Loop over subsets to generate figures
-for K, seed_id, log_iterations in iter_simulation_data() :
+# Number of repititions
+M = 30
 
-    # Load the data
-    lname = os.path.join(get_path('data'), 'Fig6', f'RM_{K}_seed_{seed_id}.mat')
-    if os.path.exists(lname) :
-        data = scipy.io.loadmat(lname)
+# Load parameters
+C, eta, alpha, beta, delta, T, lb, ub, S, f, iterations = default_parameters()
+beta = 25
+T = 1e4
 
-    else :
-        raise ValueError(f'{lname} is missing!')
+# Compute SS value
+deb = delta / (eta * (beta - 1))
 
-
-    # Get data from the run
-    Bs = [b[0, :].tolist() for b in data['B_samples'][0, :][log_iterations].flatten().tolist()] # wtf scipy?
-
-    A_ij, A_RMs, A_Bs = compute_network(Bs)
-
-    A = (A_Bs > 0).astype(int) - np.eye(len(A_Bs))
-
-    A2 = np.dot(A, A)
-    A3 = np.dot(A2, A)
-
-    tA2 = np.trace(A2)
-    tA3 = np.trace(A3)
-
-    closed_triplets = tA3 / (2*3) # 2 paths, 3 members in the triplet
-    open_triplets = (A2.sum() - tA2 - tA3) / 2
-
-    n_open_triplets.append(open_triplets)
-    n_closed_triplets.append(closed_triplets)
-    Ks.append(K)
-    iterations.append(log_iterations)
+# Determine which case to simulate
+B = [[0], [1], [0, 1]]
+P = [[]]
 
 
-# Combine results
-df = pd.DataFrame({'K' : Ks, 'iterations' : iterations, 'closed_triplets' : n_closed_triplets, 'open_triplets' : n_open_triplets})
-df['triplet_ratio'] = df.closed_triplets / (df.closed_triplets + df.open_triplets)
+# Define test omegas
+omegas = np.power(10, [-0.25, -0.5, -1, -2])
 
-mean = df.groupby(['K', 'iterations']).mean()
-std =  df.groupby(['K', 'iterations']).std()
+# Compute number of RM systems
+RMs = get_RMs(B)
 
-
-fig, axes = plt.subplots(nrows=1, ncols=3, figsize=(8, 3), sharex=True)
-plt.subplots_adjust(wspace = 0.4)
-
-for K in np.unique(Ks) :
-    n = np.sum(df.K == K)
-    m = mean.loc[pd.IndexSlice[K, :]]
-    s = std.loc[pd.IndexSlice[K, :]]
-
-    axes[0].errorbar(np.power(10, m.index), m.open_triplets,   s.open_triplets,   fmt = '.', capsize = 5, markeredgewidth = 2)
-    axes[1].errorbar(np.power(10, m.index), m.closed_triplets, s.closed_triplets, fmt = '.', capsize = 5, markeredgewidth = 2)
-    axes[2].errorbar(np.power(10, m.index), m.triplet_ratio,   s.triplet_ratio,   fmt = '.', capsize = 5, markeredgewidth = 2, label=f'K = {K}')
+# Number of bacteria and phages
+nB = len(B)
+nP = len(P)
 
 
-for ax in axes :
-    ax.set_xscale('log')
-    ax.set_xlabel('Iterations')
-    ax.set_xticks(np.power(10, np.arange(3, 7)))
-
-for ax in axes[:2] :
-    ax.set_yscale('log')
-    ax.set_ylim(1e-1, 1e7)
+# Prepare figure
+fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(12, 6))
+axes = axes.flatten()
+axes[2].remove()
+axes = axes[[0, 1, 3]]
 
 
-axes[0].set_ylabel('# hierarchical triplets', labelpad = -4)
-axes[1].set_ylabel('# looped triplets', labelpad = -4)
+# Adjust position of axes
+tmp0 = axes[0].get_position()
+tmp1 = axes[1].get_position()
+tmp2 = axes[2].get_position()
 
-axes[2].set_ylim(0, 1)
-axes[2].set_ylabel('Fraction looped triplets')
-axes[2].legend(bbox_to_anchor=(1.05, 1.04), loc='upper left').get_frame().set_edgecolor('k')
-
+dx = 0.1
+axes[1].set_position([tmp1.xmin+dx, tmp1.ymin, tmp1.xmax-tmp1.xmin-dx*1.2, tmp1.ymax-tmp1.ymin])
+axes[2].set_position([tmp2.xmin+dx, tmp2.ymin, tmp2.xmax-tmp2.xmin-dx*1.2, tmp2.ymax-tmp2.ymin])
+axes[0].set_position([tmp0.xmin,    tmp2.ymin, tmp0.xmax-tmp0.xmin+dx*1.2, tmp0.ymax-tmp2.ymin])
 
 # Add the figure labels
-add_figure_labels(['A', 'B', 'C'], axes, dx=-0.067, dy=0.05)
+add_figure_labels(['A'],     [axes[0]], dx=-0.05, dy=0.025)
+add_figure_labels(['B', 'C'], axes[1:], dx=-0.03, dy=0.025)
+
+# Set the labels
+for ax in [axes[0], axes[2]] :
+    ax.set_xlabel('$\gamma$')
+
+axes[0].set_ylabel('$B$')
+axes[1].set_ylabel('$b_A, b_B$')
+axes[2].set_ylabel('$b_{AB}$')
+
+for ax in axes :
+    ax.set_xlim(0, 1)
+
+ylims = [np.round((3*deb) / 10**np.floor(np.log10(3 * deb)), 2) * 10**np.floor(np.log10(3 * deb)),
+         np.ceil( (  deb) / 10**np.floor(np.log10(    deb)))    * 10**np.floor(np.log10(    deb)),
+         np.ceil( (  deb) / 10**np.floor(np.log10(    deb)))    * 10**np.floor(np.log10(    deb))]
+
+for ax, ymax in zip(axes, ylims) :
+    ax.set_ylim(0, ymax)
+
+for ax in axes[1:] :
+    ax.ticklabel_format(axis='y', style='sci', scilimits=(0, 0))
+
+symbols = ['v', 's', 'o', '^']
 
 
-# Prepare figure folders
+# Guide lines
+axes[0].plot([alpha, alpha], axes[0].get_ylim(), 'k-.', linewidth = 1.5)
+axes[1].plot([alpha, alpha], axes[1].get_ylim(), 'k-.', linewidth = 1.5, label = '$\gamma = \\alpha$')
+axes[2].plot([alpha, alpha], axes[2].get_ylim(), 'k-.', linewidth = 1.5)
+
+f = lambda g, o : (g**2 * (1 + o) - 2 * o * g) * (1 - 2 * delta / (beta * (1 + o) - 2)) - alpha * (1 - o)
+g = lambda o : scipy.optimize.root(lambda g : f(g, o), 1)
+gg = np.array([g(o).x[0] for o in omegas])
+
+
+
+label = '$\gamma = f(\omega)$'
+for g in gg :
+    axes[0].plot([g, g], axes[0].get_ylim(), 'k--', linewidth = 1.5)
+    axes[1].plot([g, g], axes[1].get_ylim(), 'k--', linewidth = 1.5, label = label)
+    axes[2].plot([g, g], axes[2].get_ylim(), 'k--', linewidth = 1.5)
+    label = '_nolegend_'
+
+
+axes[0].plot(axes[0].get_xlim(),    [deb,    deb], 'k', linewidth = 1.5)
+axes[1].plot(axes[1].get_xlim(), [10*deb, 10*deb], 'k', linewidth = 1.5, label = '$\\frac{\delta}{\eta(\\beta-1)}$')
+axes[2].plot(axes[2].get_xlim(),    [deb,    deb], 'k', linewidth = 1.5)
+
+
+
+label = '$\\frac{2\delta}{\eta(\\beta(1+\\omega)-2)}$'
+for o in omegas :
+    tmp = delta / (eta * (beta * (1 + o) - 2))
+    axes[0].plot(axes[0].get_xlim(), [2*tmp, 2*tmp], 'k:', linewidth = 1.5)
+    axes[1].plot(axes[1].get_xlim(),   [tmp,   tmp], 'k:', linewidth = 1.5, label = label)
+    label = '_nolegend_'
+
+
+
+# Loop over omegas
+for j, o in tqdm(enumerate(omegas), total=len(omegas)) :
+    label = f'$\omega = 10^{{{np.log10(o)}}}$'
+
+    # Loop over gammas
+    for r in tqdm(np.linspace(0, 1, M), total=M, leave=False) :
+
+        # delta eta beta limit
+        x0 = deb * np.concatenate((np.ones(nB) / nB, 10 / (nB * nP) * np.ones(nB*nP)))
+
+
+        omega_0 = np.ones_like(RMs) * o
+        cost    = np.ones_like(RMs) * r
+
+        # Run dynamics
+        _, _, y, t, res = dynamical_system('Extended', B, P, omega_0=omega_0, cost=cost, params=(alpha, beta, eta, delta, C, T), x0 = x0, solver=get_solver(), rtol = 1e-4, atol = 1e-7)
+
+        if t[-1] < T :
+            B_end = y[:nB, -1]
+        else :
+            B_end = np.median(res.sol(np.linspace(T-10, 10, 100))[:nB, :], axis=1)
+
+        axes[0].scatter(cost[0],  B_end.sum(), marker = symbols[j], color = plt.cm.tab10(j), zorder = 3, label = label)
+        axes[1].scatter(cost[:2], B_end[:2],   marker = symbols[j], color = plt.cm.tab10(j), zorder = 3)
+        axes[2].scatter(cost[0],  B_end[-1],   marker = symbols[j], color = plt.cm.tab10(j), zorder = 3)
+
+        label = '_nolegend_'
+
+leg = axes[0].legend().get_frame()
+leg.set_edgecolor('k')
+leg.set_alpha(1.0)
+leg.set_linewidth(1.0)
+
+leg = axes[1].legend(bbox_to_anchor=(-0.22, -0.51)).get_frame()
+leg.set_edgecolor('k')
+leg.set_alpha(1.0)
+leg.set_linewidth(1.0)
+
 fig_path = os.path.join(get_path(), 'Figure_S10')
 make_dirs(fig_path)
-
 fig.savefig(os.path.join(fig_path, 'figS10.png'), bbox_inches = 'tight')

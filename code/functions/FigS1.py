@@ -36,7 +36,7 @@ q_inds = np.searchsorted(average_RM_abundence[sort_ind], q_cuts)
 
 
 percentages = (np.arange(n_subsets) + 1) / n_subsets
-np.random.seed(0)
+np.random.seed(60)
 
 # Loop over subsets to generate figures
 data_id = 0
@@ -73,7 +73,7 @@ with tqdm(total=len(q_inds)) as pbar:
                     continue
 
                 # Get the metrics from the subset data
-                _, RMs_per_B, _, _, f_unique_ss, avg_o_ij_ss = get_metrics_of_real_network(Bss)
+                RMs_per_B, f_unique_ss, avg_o_ij_ss, _, _, _ = get_metrics_of_real_network(Bss)
 
                 nRMs[percentage_id, bootstrap_id]     = RMs_per_B.mean()
                 overlaps[percentage_id, bootstrap_id] = avg_o_ij_ss
@@ -83,9 +83,9 @@ with tqdm(total=len(q_inds)) as pbar:
         color = plt.cm.tab10(data_id)
         data_id += 1
 
-        axes[0].errorbar(100*percentages[:-1], nRMs[:-1].mean(axis=1),     yerr=nRMs[:-1].std(axis=1)     / np.sqrt(n_bootstraps), fmt = '.', capsize = 5, markeredgewidth = 2, color = color, label=genus)
-        axes[1].errorbar(100*percentages[:-1], overlaps[:-1].mean(axis=1), yerr=overlaps[:-1].std(axis=1) / np.sqrt(n_bootstraps), fmt = '.', capsize = 5, markeredgewidth = 2, color = color, label=genus)
-        axes[2].errorbar(100*percentages[:-1], uniques[:-1].mean(axis=1),  yerr=overlaps[:-1].std(axis=1) / np.sqrt(n_bootstraps), fmt = '.', capsize = 5, markeredgewidth = 2, color = color, label=genus)
+        axes[0].errorbar(100*percentages[:-1], nRMs[:-1].mean(axis=1),     yerr=nRMs[:-1].std(axis=1)     / np.sqrt(n_bootstraps), fmt = '.', capsize = 5, markeredgewidth = 2, color = color, label=f'$\it{genus}$')
+        axes[1].errorbar(100*percentages[:-1], overlaps[:-1].mean(axis=1), yerr=overlaps[:-1].std(axis=1) / np.sqrt(n_bootstraps), fmt = '.', capsize = 5, markeredgewidth = 2, color = color, label=f'$\it{genus}$')
+        axes[2].errorbar(100*percentages[:-1], uniques[:-1].mean(axis=1),  yerr=overlaps[:-1].std(axis=1) / np.sqrt(n_bootstraps), fmt = '.', capsize = 5, markeredgewidth = 2, color = color, label=f'$\it{genus}$')
 
         axes[0].plot([0, 100], [nRMs[-1].mean()]     * 2, ':', color = color)
         axes[1].plot([0, 100], [overlaps[-1].mean()] * 2, ':', color = color)
@@ -103,7 +103,7 @@ axes[1].set_ylabel('$\langle I\;/\;U \\rangle$')
 
 axes[2].set_ylim(0, 1)
 axes[2].set_xlabel('Percent sampled')
-axes[2].set_ylabel('$f^{ u}$')
+axes[2].set_ylabel('$f^{u}$')
 
 
 axes[2].legend(bbox_to_anchor=(1.05, 1.03), loc='upper left').get_frame().set_edgecolor('k')

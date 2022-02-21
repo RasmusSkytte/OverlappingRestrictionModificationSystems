@@ -1,108 +1,138 @@
 import numpy as np
 
 import matplotlib.pyplot as plt
-from matplotlib import cm
+import scipy.io
 
 from tqdm import tqdm
 
 import os
 
-from helpers import make_dirs, get_path, set_rc_params, pickle_read, compute_gamma_and_omega, add_figure_labels
+from helpers import default_parameters, make_dirs, get_path, set_rc_params
+
 
 set_rc_params()
+plt.rcParams.update({'font.size': 10.0}) # These figures need a little smaller font
 
-iterations = 1e4
+Ks = [-1, 800, 400, 200, 100, 50]
+seeds = [0, 1, 2, 3, 4, 5]
 
-data_path = get_path('data')
-fig_path  = get_path()
-make_dirs(os.path.join(fig_path, 'Figure_S12'))
+# Load parameters
+C, _, _, beta, _, _, _, _, _, _, iterations = default_parameters()
 
-
-fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(8, 6))
-plt.subplots_adjust(wspace=0.3)
-
-# Loop over simulations
-for simulation_id, (xlim, ylim) in tqdm(enumerate(zip([0.97, 0.94], [-10.0, -10.0])), total=2) :
-
-    # Set settings for the run
-    if simulation_id == 0 :
-        RMs = np.arange(800)
-
-    elif simulation_id == 1 :
-        RMs = np.arange(50)
-
-    # Load the data
-    lname = os.path.join(data_path, 'FigS12', f'iterations_1e{np.log10(iterations):.1f}', f'RM_{len(RMs)}_seed_0.pkl')
-    if os.path.exists(lname) :
-        B, B_end, P_end, bacteria, phages, diversity, _, cost, omega_0, _, _, _, B_all, alpha, _, eta, _, C, _, _, _, _, _, _, _ = pickle_read(lname)
-    else :
-        raise ValueError(f'{lname} is missing!')
-
-    # Define the extinction function
-    extinction_function = lambda g, o : g * (1 - bacteria[-1] / C)  - alpha - eta * o * phages[-1] > 0
-
-    # Select strains in the plotting window
-    B_possible = [b for b in B_all if np.prod(cost[b]) > xlim]
-
-    # Add strains that did survive despite being above the extinction curve
-    B_possible.extend([b for b in B if b not in B_possible])
-
-    # Determine the indicies of the posible strains that went extinct
-    I = np.array([b not in B for b in B_possible])
-    I = np.argwhere(I).flatten() - np.arange(I.sum())
-
-    # Get the biomass and phage counts for the possible strains
-    B_end_possible = np.insert(B_end,       I, np.zeros_like(I))    # extinct strains have zero biomass
-    P_end_possible = np.insert(P_end[0, :], I, np.zeros_like(I))    # extinct strains have phage count of zero
-
-    # Determine the naive parameters of the strains
-    gammas_naive = np.array([np.prod(cost[b])    for b in B_possible])
-    omegas_naive = np.array([np.prod(omega_0[b]) for b in B_possible])
-
-    # Get the omegas matrix based on the possible strains
-    _, omega = compute_gamma_and_omega(B_possible, [[]], cost, omega_0, model='Extended')
-
-    # Weight omega by phage counts
-    omega_masked = np.ma.array(omega[0], mask=False)                                        # Convert omega to masked array
-    ww = np.ma.array(np.repeat(P_end_possible[np.newaxis, :], len(omega_masked), axis=0))   # Create similarily masked array with the phage counts
-    omega_masked.mask = ww.mask = np.eye(len(omega_masked)) > 0                             # Mask the diagonal elements of the arrays
-    avg_effective_omega = (np.sum(omega_masked * ww, axis=1) / np.sum(ww, axis=1)).data     # Compute the effective omegas
-
-    # Color the nodes based on survival state
-    viridis = cm.get_cmap('viridis')
-    colors = [viridis(biomass / B_end.max()) for biomass in B_end]
-
-    # Create plots with naive omegas and with the weighted omegas
-    for plot_id, (ax, omegas, ylabel, suffix) in enumerate(zip([axes[0][simulation_id], axes[1][simulation_id]], [omegas_naive, avg_effective_omega], ['$\omega$', '$\omega$ (effective)'], ['naiive', 'weighted'])) :
-
-        # Plot the data
-        ax.scatter([g for g, b in zip(gammas_naive, B_end_possible) if b != 0.0],
-                   [o for o, b in zip(omegas,       B_end_possible) if b != 0.0],
-                   s=14, c=colors, marker='o', linewidths=0.5, edgecolors='w')
-
-        ax.scatter([g for g, b in zip(gammas_naive, B_end_possible) if b == 0.0],
-                   [o for o, b in zip(omegas,       B_end_possible) if b == 0.0],
-                   s=10, c='k',    marker='x', linewidths=0.5)
-
-        # Plot the extinciton line
-        oo = np.logspace(ylim, 0, 200)
-        gg = (alpha + oo * eta * phages[-1]) / (1 - bacteria[-1] / C)
-        ax.plot(gg, oo, 'r:')
-
-        ax.set_xlim(xlim, 1)
-
-        ax.set_ylim(np.power(10, ylim), 1)
-        ax.set_yscale('log')
-
-        if simulation_id == 0 :
-            ax.set_ylabel(ylabel)
-
-        if plot_id == 1 :
-            ax.set_xlabel('$\gamma$')
+data_path = os.path.join(get_path('data'))
 
 
-# Add the figure labels
-add_figure_labels(['A', 'B', 'C', 'D'], axes.flatten(), dx=-0.08, dy=0.024)
+# Prepare figure
+x0 = 0.18   # X coord of first col
+w0 = 0.18   # Width of first col
+dx = 0.05   # Distance between axes
 
 
-fig.savefig(os.path.join(fig_path, 'Figure_S12', 'figS12.png'), bbox_inches = 'tight')
+# Loop over seeds to generate panel
+for fig_id, K in tqdm(enumerate(Ks), total = len(Ks)) :
+
+    fig = plt.figure(figsize=(8, 4))
+    ax_dynamics     = []
+    ax_abundency    = []
+    ax_distribution = []
+
+    x0 = 0
+    for _ in range(len(seeds)) :
+        ax_dynamics.append(    fig.add_axes([x0, 0.375, w0, 1.0 - 0.5]))
+        ax_abundency.append(   fig.add_axes([x0, 0.23,  w0, 0.12], sharex=ax_dynamics[-1]))
+        ax_distribution.append(fig.add_axes([x0, 0.02,  w0, 0.10]))
+
+        x0 += w0 + dx
+
+
+
+    ax_annotate = fig.add_subplot(111, facecolor='none')
+
+    xa = -0.23  # X coord of the annotaiton
+    ax_annotate.text(xa,  0.54, 'P / (10*C)', verticalalignment = 'center', horizontalalignment = 'left', rotation = 90, color='r')
+    ax_annotate.text(xa,  0.72, ', B / C,',   verticalalignment = 'center', horizontalalignment = 'left', rotation = 90, color='k')
+    ax_annotate.text(xa,  0.86, 'D / β',      verticalalignment = 'center', horizontalalignment = 'left', rotation = 90, color='b')
+
+    ax_annotate.text(xa,  0.23, '$\langle $#$RM\\rangle$', verticalalignment = 'center', horizontalalignment = 'left', rotation = 90)
+
+    ax_annotate.text(xa, -0.05, 'pmf.', verticalalignment = 'center', horizontalalignment = 'left', rotation = 90)
+    ax_annotate.set_axis_off()
+
+
+    for ax_id, seed in tqdm(enumerate(seeds), total = len(seeds), leave = False) :
+
+        # Add the simulation dynamics to the plot
+        if K > 0 :
+            RMs = np.arange(K)
+
+            lname = os.path.join(data_path, 'Fig6', f'RM_{K}_seed_{seed}.mat')
+            label = f'${K=}$'
+
+            if os.path.exists(lname) :
+                data = scipy.io.loadmat(lname)
+                data['nRM'] = [len(lst[0, :].tolist()) for lst in data['B_samples'][0, :][-1].flatten().tolist()] # wtf scipy?
+
+            else :
+                raise ValueError(f'{lname} is missing!')
+
+        else :
+            lname = os.path.join(data_path, 'Fig6', f'RM_inf_seed_{seed}.mat')
+            label = '$K =\infty$'
+
+            if os.path.exists(lname) :
+                data = scipy.io.loadmat(lname)
+                data['nRM'] = data['nRM'].flatten()
+            else :
+                raise ValueError(f'{lname} is missing!')
+
+        # Plot dynamics
+        ax_dynamics[ax_id].plot(np.arange(iterations), data['phages'].flatten()    / (10 * C), 'r', label='P / (10 C)')
+        ax_dynamics[ax_id].plot(np.arange(iterations), data['bacteria'].flatten()  / C,        'k', label='C')
+        ax_dynamics[ax_id].plot(np.arange(iterations), data['diversity'].flatten() / beta,     'b', label='D / $\\beta$')
+
+        # Label first column only
+        if ax_id == 0 :
+            ax_dynamics[ax_id].text(6e5, 2.7, label, horizontalalignment = 'right')
+
+        # Plot the average RM count
+        ax_abundency[ax_id].plot(np.arange(iterations), data['mRM'].flatten(), color=plt.cm.tab10(4))
+
+        # Plot the histogram
+        ax_distribution[ax_id].hist(data['nRM'], bins=np.arange(0.5, 6.5), color=plt.cm.Pastel1(2), density=True)
+
+
+        # Dynamics axes
+        ax_dynamics[ax_id].set_yticks(range(4))
+
+        ax_dynamics[ax_id].tick_params(
+            axis='x',          # changes apply to the x-axis
+            which='both',      # both major and minor ticks are affected
+            bottom=False,      # ticks along the bottom edge are off
+            top=False,         # ticks along the top edge are off
+            labelbottom=False) # labels along the bottom edge are off
+        ax_dynamics[ax_id].set_xlim(1, iterations)
+        ax_dynamics[ax_id].set_xticks(np.power(10, np.arange(np.log10(iterations)+1)))
+        ax_dynamics[ax_id].set_xscale('log')
+
+        # Average RM axes
+        ax_abundency[ax_id].set_yticks(range(0, 5, 2))
+        ax_abundency[ax_id].set_ylim(0, 4.9)
+
+        ax_abundency[ax_id].set_xlim(1, iterations)
+        ax_abundency[ax_id].set_xscale('log')
+        ax_abundency[ax_id].set_xticks(np.power(10, np.arange(np.log10(iterations)+1, step=2)))
+        ax_abundency[ax_id].set_xlabel('Time (# Additions)', labelpad=0)
+
+
+        #  Histogram axes
+        ax_distribution[ax_id].set_xticks(range(6))
+        ax_distribution[ax_id].set_xlim(-0.5, 5.5)
+        ax_distribution[ax_id].set_xlabel('# RM', labelpad=3)
+
+        ax_distribution[ax_id].set_yticks(range(2))
+        ax_distribution[ax_id].set_ylim(0, 1)
+
+
+    fig_path = os.path.join(get_path(), 'Figure_S12')
+    make_dirs(fig_path)
+    fig.savefig(os.path.join(fig_path, f'figS12_{fig_id}.png'), bbox_inches = 'tight')

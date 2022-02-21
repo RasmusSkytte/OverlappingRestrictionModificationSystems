@@ -1,88 +1,67 @@
 import numpy as np
-
 import matplotlib.pyplot as plt
+
+from helpers import make_dirs, get_path, set_rc_params
+from helpers import analyze_sequence_data, pickle_write, pickle_read
+from helpers import plot_summery_figure, conserve_RM_degree, add_figure_labels
 
 import os
 
-from helpers import default_parameters, make_dirs, get_path, set_rc_params
-from helpers import add_figure_labels
-
 set_rc_params()
 
+# Prepare figure folders
+fig_path = os.path.join(get_path(), 'Figure_S8')
+data_path = os.path.join(get_path('data'), 'FigS8')
+make_dirs(fig_path)
+make_dirs(data_path)
 
-# Load parameters
-C, eta, alpha, beta, delta, T, lb, ub, S, f, iterations = default_parameters()
+# Check if data has been generated
+lpath = os.path.join(data_path, 'data_sequences_species.pkl')
+if not os.path.exists(lpath) :
 
-# Get the path
-data_path = get_path('data')
+    # Generate and store the data
+    pickle_write(lpath, *analyze_sequence_data(conserve_RM_degree = conserve_RM_degree(), grouping = 'species'))
 
-# Prepare figure
-fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(8, 8/2))
-plt.subplots_adjust(wspace=0.35)
-axes = axes.flatten()
+# Load the data
+diff_random_unique, diff_random_o_ij, _, _, _, _, RMs_abundence, average_RM_abundence, names = pickle_read(lpath)
 
-for ax in axes :
-    ax.set_xlabel('$\gamma$')
+# Prepare figures
+fig, axes = plt.subplots(nrows=3, ncols=1, figsize=(8, 8.5))
+axes_o_ij, axes_unique, axes_RMs = axes
 
-axes[0].set_ylabel('$\\omega$')
-
-
-D = 100
-T = 10
-
-
-# Hierarchical triplets -- Helper functions
-k1_t = lambda o, D, T :  1 + o * (D - T - 1)
-k2_t = lambda o, D, T : (2 + o * (D - T - 2)) * o
-k3_t = lambda o, D, T : 1 - (D - T) * delta / C / (eta * (beta * k1_t(o, D, T) - (D - T)))
-
-a_t = lambda o, D, T :   k1_t(o, D, T) * k3_t(o, D, T)
-b_t = lambda o, D, T : - k2_t(o, D, T) * k3_t(o, D, T)
-c_t = lambda o, D, T : alpha * (k2_t(o, D, T) - k1_t(o, D, T))
-
-s_t = lambda o, D, T : b_t(o, D, T) ** 2 - 4 * a_t(o, D, T) * c_t(o, D, T)
-
-f_t = lambda o, D, T : (-b_t(o, D, T) + np.sqrt(s_t(o, D, T))) / (2 * a_t(o, D, T))
-f_t = np.vectorize(f_t)
+# Reoder the data
+diff_random_o_ij   =  [x for _, x in sorted(zip(average_RM_abundence, diff_random_o_ij))]
+diff_random_unique =  [x for _, x in sorted(zip(average_RM_abundence, diff_random_unique))]
+RMs_abundence      =  [x for _, x in sorted(zip(average_RM_abundence, RMs_abundence))]
+names              =  [x for _, x in sorted(zip(average_RM_abundence, names))]
 
 
+print('-------------- Data report -----------------')
+print(f'{names[-1]} strains have on average {np.round(np.mean(RMs_abundence[-1]), 1)} RN systems with standard deviation of +- {np.round(np.std(RMs_abundence[-1]), 1)}')
 
-# Looped triplets -- Helper functions
-k1_l = lambda o, D, T :  1 + o * (D - 3*T - 1)
-k2_l = lambda o, D, T :   o**2 * (D - 3*T)
-k3_l = lambda o, D, T : 1 - (D - 3*T) * delta / C / (eta * (beta * k1_l(o, D, T) - (D - 3*T)))
-
-a_l = lambda o, D, T :   k1_l(o, D, T) * k3_l(o, D, T)
-b_l = lambda o, D, T : - k2_l(o, D, T) * k3_l(o, D, T)
-c_l = lambda o, D, T : alpha * (k2_l(o, D, T) - k1_l(o, D, T))
-
-s_l = lambda o, D, T : b_l(o, D, T) ** 2 - 4 * a_l(o, D, T) * c_l(o, D, T)
-
-f_l = lambda o, D, T : (-b_l(o, D, T) + np.sqrt(s_l(o, D, T))) / (2 * a_l(o, D, T))
-f_l = np.vectorize(f_l)
+plot_summery_figure(axes, names, zip(diff_random_o_ij, diff_random_unique, RMs_abundence), disable_significance=[False, False, True], sort=False)
+lpad = -3
 
 
-ww = np.logspace(-4.1, 0.1, 50)
+axes_o_ij.set_yticks(np.arange(-1, 1, 0.1))
+axes_o_ij.set_ylim(-0.1, 0.4)
+axes_o_ij.set_ylabel('$\langle I\;/\;U \\rangle$ - $\langle I\;/\;U\\rangle_{rand}$', labelpad=lpad+1, y = 0.45)
+
+axes_unique.set_yticks(np.arange(-1, 1, 0.1))
+axes_unique.set_ylim(-0.1, 0.55)
+axes_unique.set_ylabel('$f^{ u} - f^{ u}_{rand}$', labelpad=lpad-2)
 
 
-with np.errstate(invalid='ignore') :
-    for i, T in enumerate([1, 3, 10, 33]) :
-        axes[0].plot(f_t(ww, D, T), ww, color = plt.cm.tab10(i))
-        axes[1].plot(f_l(ww, D, T), ww, color = plt.cm.tab10(i), label=f'T = {T}')
+pos = axes_RMs.get_position()
+pos.y0 += 0.125
+axes_RMs.set_position(pos)
 
-for ax in axes :
-    ax.plot(f_t(ww, 3, 1), ww, 'k--', zorder = 0)
-    ax.set_yscale('log')
-    ax.set_box_aspect(1)
-    ax.set_xlim(0,    1)
-    ax.set_ylim(1e-4, 1)
+axes_RMs.set_yticks(np.arange(0, 20, 4))
+axes_RMs.set_ylim(0, 6)
+axes_RMs.set_ylabel('#RM', labelpad=lpad+12)
 
 
 # Add the figure labels
-add_figure_labels(['A', 'B'], axes, dx=-0.07, dy=0.036)
+add_figure_labels(['A', 'B', 'C'], axes, dx=-0.075, dy=0.017)
 
-axes[1].legend(bbox_to_anchor=(1.05, 1.03), loc='upper left').get_frame().set_edgecolor('k')
-
-fig_path = os.path.join(get_path(), 'Figure_S8')
-make_dirs(fig_path)
 fig.savefig(os.path.join(fig_path, 'figS8.png'), bbox_inches = 'tight')

@@ -1,8 +1,4 @@
-import numpy as np
-import pandas as pd
-
 import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
 
 from helpers import make_dirs, get_path, set_rc_params
 from helpers import load_reference_data, iter_reference_data

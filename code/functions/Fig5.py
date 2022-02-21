@@ -265,12 +265,4 @@ for ax in axes :
 add_figure_labels(['D', 'E', 'F'], axes, dx=-0.063, dy=0.01)
 
 
-
-
-
-
-
-
-
-
 fig.savefig(os.path.join(fig_path, f'fig5.png'), bbox_inches = 'tight')

@@ -82,8 +82,7 @@ ax_inset_2     = fig.add_axes([x_off+x2+(w2+dx_c/2),       y0-dy-s*(y0-dy)-y_off
 xa = -0.05 # X coord of the annotaiton
 ax_annotate.text(xa, 0.64, 'P / (10*C)',  verticalalignment = 'center', horizontalalignment = 'right', rotation = 90, color='r')
 ax_annotate.text(xa, 0.79, ', B / C,',    verticalalignment = 'center', horizontalalignment = 'right', rotation = 90, color='k')
-ax_annotate.text(xa, 0.91,  'D / B',       verticalalignment = 'center', horizontalalignment = 'right', rotation = 90, color='b')
-#ax_annotate.text(xa, 0.75, 'P / (10*C), B / C, D / B',    verticalalignment = 'center', horizontalalignment = 'right', rotation = 90, color='k')
+ax_annotate.text(xa, 0.91,  'D / β',      verticalalignment = 'center', horizontalalignment = 'right', rotation = 90, color='b')
 
 ax_annotate.text(xa, 0.36, '$\langle $#$RM\\rangle$', verticalalignment = 'center', horizontalalignment = 'right', rotation = 90)
 
@@ -117,7 +116,7 @@ ax_dynamics.plot(np.arange(iterations), data['phages'].flatten()    / (10 * C), 
 ax_dynamics.plot(np.arange(iterations), data['bacteria'].flatten()  / C,        'k', label='C')
 ax_dynamics.plot(np.arange(iterations), data['diversity'].flatten() / Beta,     'b', label='D / $\\beta$')
 
-ax_dynamics.text(3e4, 2.7, f'{K=}')
+#ax_dynamics.text(3e4, 2.7, f'{K=}')
 
 # Plot the average RM count
 ax_abundency.plot(np.arange(iterations), data['mRM'].flatten(), color=plt.cm.tab10(4))
@@ -153,6 +152,7 @@ ax_abundency.set_xlabel('Time (# Additions)', labelpad=0)
 
 #  Histogram axes
 ax_distribution.set_xticks(range(6))
+ax_distribution.set_xlim(-0.5, 5.5)
 ax_distribution.set_xlabel('# RM', labelpad=0)
 
 ax_distribution.set_yticks(range(2))
@@ -169,11 +169,17 @@ if not os.path.exists(lpath) :
     pickle_write(lpath, *analyze_simulation_data(conserve_RM_degree = conserve_RM_degree()))
 
 # Load the data
-diff_random_overlap, diff_random_unique, diff_random_o_ij, RMs_abundence, average_RM_abundence, _, names, iters = pickle_read(lpath)
+diff_random_unique, diff_random_o_ij, RMs_abundence, average_RM_abundence, names, iters = pickle_read(lpath)
 
+# Exclude earlier iterations
+its = [3, 4, 5, 6]
+average_RM_abundence = [x for x, it in zip(average_RM_abundence, iters) if it in its]
+diff_random_o_ij     = [x for x, it in zip(diff_random_o_ij,     iters) if it in its]
+diff_random_unique   = [x for x, it in zip(diff_random_unique,   iters) if it in its]
+RMs_abundence        = [x for x, it in zip(RMs_abundence,        iters) if it in its]
+names                = [x for x, it in zip(names,                iters) if it in its]
 
 # Compute metrics for later
-
 # Plot the correlation significant summery metrics
 x2  = np.array([np.mean(s) for s in diff_random_o_ij])
 dx2 = np.array([ np.std(s) for s in diff_random_o_ij])
@@ -183,13 +189,14 @@ dy2 = np.array([ np.std(s) for s in diff_random_unique])
 # Color by the iterations
 c2 = np.array(average_RM_abundence)
 
-# Filter out some data
-#seed = 0
+
+# Filter out data so only 1 seed remains
 average_RM_abundence = [x for x, name in zip(average_RM_abundence, names) if int(name.split(':')[-1]) == seed]
 diff_random_o_ij     = [x for x, name in zip(diff_random_o_ij,     names) if int(name.split(':')[-1]) == seed]
 diff_random_unique   = [x for x, name in zip(diff_random_unique,   names) if int(name.split(':')[-1]) == seed]
 RMs_abundence        = [x for x, name in zip(RMs_abundence,        names) if int(name.split(':')[-1]) == seed]
 names                = [name.replace('RM', 'K') for name in names         if int(name.split(':')[-1]) == seed]
+
 
 # Reoder the data
 diff_random_o_ij   =  [x for _, x in sorted(zip(average_RM_abundence, diff_random_o_ij),    key=lambda x: x[0])]
@@ -225,7 +232,7 @@ if not os.path.exists(lpath) :
     pickle_write(lpath, *analyze_sequence_data(conserve_RM_degree = conserve_RM_degree()))
 
 # Load the data
-_, diff_random_unique, diff_random_o_ij, _, average_RM_abundence, _, _, _ = pickle_read(lpath)
+diff_random_unique, diff_random_o_ij, _, _, _, _, _, average_RM_abundence, _ = pickle_read(lpath)
 
 # Plot the correlation significant summery metrics
 x1  = np.array([np.mean(s) for s in diff_random_o_ij])

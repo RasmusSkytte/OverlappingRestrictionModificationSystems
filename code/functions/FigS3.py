@@ -76,4 +76,3 @@ axes[2].set_xlabel('# Intersection / # Union', labelpad=lpad)
 add_figure_labels(['A', 'B', 'C'], axes, dx=-0.04, dy=0.025)
 
 fig.savefig(os.path.join(fig_path, 'Figure_S3', 'figS3.png'), bbox_inches = 'tight')
-

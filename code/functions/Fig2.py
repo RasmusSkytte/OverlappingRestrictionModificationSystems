@@ -105,8 +105,6 @@ I = found_motifs > 0
 data_motifs.loc[I].sort_values(by='R-M motif').to_csv(os.path.join(fig_path,  'found_motifs.csv'),   index = False)
 data_motifs.loc[~I].sort_values(by='R-M motif').to_csv(os.path.join(fig_path, 'missing_motifs.csv'), index = False)
 
-
-
 lpad = 5   # Distance between x/y labels and the axes
 dy = '   '
 fig, axes = plt.subplots(nrows=3, ncols=2, figsize=(8, 10))
@@ -122,8 +120,20 @@ axes[0].hist(data, bins=np.arange(start=-0.5, stop=np.max(data)+1.5), weights=we
 axes[0].set_xticks(np.arange(0, 20, step=2))
 axes[0].set_xlim(-0.5, 18+0.5)
 axes[0].set_ylim(0, 0.5)
-axes[0].set_xlabel('$\langle $# RM systems$\\rangle$ per genera', labelpad=lpad)
-axes[0].set_ylabel('Fraction of genera'+dy,                       labelpad=lpad)
+axes[0].set_xlabel('$\langle $# RM systems$\\rangle$ per genus', labelpad=lpad)
+axes[0].set_ylabel('Fraction of genera'+dy,                      labelpad=lpad)
+
+
+# Plot the RM per B distribution
+data = np.array(flatten_list(nRM_per_B))
+print(f'Average RM abundency across genera is {data.mean():.2f}, with a maximum abundecy of {data.max()}')
+weights = flatten_list([np.full(len(n), fill_value = 1/len(n)) for n in nRM_per_B])
+axes[1].hist(data, bins=np.arange(start=-0.5, stop=np.max(data)+1.5), weights=weights, color=plt.cm.Pastel1(2), linewidth=plt.rcParams['axes.linewidth'], edgecolor='k', density=True)
+axes[1].set_xticks(np.arange(0, 20, step=2))
+axes[1].set_xlim(-0.5, np.max(data)+0.5)
+axes[1].set_ylim(0, 0.5)
+axes[1].set_xlabel('# RM systems per strain', labelpad=lpad)
+axes[1].set_ylabel('Fraction of strains'+dy,  labelpad=lpad)
 
 
 # Number of genera RM system is found in
@@ -134,29 +144,18 @@ nGenera_per_RM = np.array([np.isin(RMs, genus) for genus in found_RMs]).sum(axis
 data = np.clip(nGenera_per_RM, 0, 18)
 data = data[data > 0]
 weights = np.ones_like(data)
-axes[1].hist(data, bins=np.arange(start=-0.5, stop=np.max(data)+1.5), weights=weights, color=plt.cm.Pastel1(1), linewidth=plt.rcParams['axes.linewidth'], edgecolor='k', density=True)
-axes[1].set_xticks(np.arange(0, 20, step=2))
-axes[1].set_xlim(-0.5, np.max(data)+0.5)
-ticks_loc = axes[1].get_xticks().tolist()
-ticks_labels = ['{:,.0f}'.format(x) for x in ticks_loc]
-ticks_labels[-1] = ' ' + ticks_labels[-1] + '+'
-axes[1].xaxis.set_major_locator(mticker.FixedLocator(ticks_loc))
-axes[1].xaxis.set_ticklabels(ticks_labels)
-axes[1].set_ylim(0, 0.4)
-axes[1].set_xlabel('# genera where RM system is found', labelpad=lpad)
-axes[1].set_ylabel('Fraction of RM systems'+dy,         labelpad=lpad)
-
-
-# Plot the RM per B distribution
-data = np.array(flatten_list(nRM_per_B))
-print(f'Average RM abundency across genera is {data.mean():.2f}, with a maximum abundecy of {data.max()}')
-weights = flatten_list([np.full(len(n), fill_value = 1/len(n)) for n in nRM_per_B])
-axes[2].hist(data, bins=np.arange(start=-0.5, stop=np.max(data)+1.5), weights=weights, color=plt.cm.Pastel1(2), linewidth=plt.rcParams['axes.linewidth'], edgecolor='k', density=True)
+axes[2].hist(data, bins=np.arange(start=-0.5, stop=np.max(data)+1.5), weights=weights, color=plt.cm.Pastel1(1), linewidth=plt.rcParams['axes.linewidth'], edgecolor='k', density=True)
 axes[2].set_xticks(np.arange(0, 20, step=2))
 axes[2].set_xlim(-0.5, np.max(data)+0.5)
-axes[2].set_ylim(0, 0.5)
-axes[2].set_xlabel('# RM systems per bacterium', labelpad=lpad)
-axes[2].set_ylabel('Fraction of bacteria'+dy,    labelpad=lpad)
+ticks_loc = axes[2].get_xticks().tolist()
+ticks_labels = ['{:,.0f}'.format(x) for x in ticks_loc]
+ticks_labels[-1] = ' ' + ticks_labels[-1] + '+'
+axes[2].xaxis.set_major_locator(mticker.FixedLocator(ticks_loc))
+axes[2].xaxis.set_ticklabels(ticks_labels)
+axes[2].set_ylim(0, 0.4)
+axes[2].set_xlabel('# genera where RM system is found', labelpad=lpad)
+axes[2].set_ylabel('Fraction of RM systems'+dy,         labelpad=lpad)
+
 
 # Plot the B per RM distribution
 data = np.clip(flatten_list(nB_per_RM), 0, 18)
@@ -172,7 +171,7 @@ ticks_labels[-1] = ' ' + ticks_labels[-1] + '+'
 axes[3].xaxis.set_major_locator(mticker.FixedLocator(ticks_loc))
 axes[3].xaxis.set_ticklabels(ticks_labels)
 axes[3].set_ylim(0, 0.6)
-axes[3].set_xlabel('# bacteria with RM system', labelpad=lpad)
+axes[3].set_xlabel('# strains with RM system',  labelpad=lpad)
 axes[3].set_ylabel('Fraction of RM systems'+dy, labelpad=lpad)
 
 

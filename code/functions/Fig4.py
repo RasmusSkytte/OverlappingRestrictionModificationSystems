@@ -23,7 +23,7 @@ if not os.path.exists(lpath) :
     pickle_write(lpath, *analyze_sequence_data(conserve_RM_degree = conserve_RM_degree()))
 
 # Load the data
-_, diff_random_unique, diff_random_o_ij, RMs_abundence, average_RM_abundence, _, _, names = pickle_read(lpath)
+diff_random_unique, diff_random_o_ij, _, _, _, _, RMs_abundence, average_RM_abundence, names = pickle_read(lpath)
 
 # Prepare figures
 fig, axes = plt.subplots(nrows=3, ncols=1, figsize=(8, 8.5))

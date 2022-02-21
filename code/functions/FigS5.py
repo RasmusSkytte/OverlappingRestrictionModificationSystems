@@ -69,7 +69,7 @@ for ax_id, strains_to_remove in enumerate(['', 'Helicobacter']) :
     h = axes[ax_id].pcolor(nRM, nRM, df.to_numpy(), cmap='Purples', vmin=0, vmax=0.6)
 
     if ax_id == len(axes) - 1 :
-        cax = inset_axes(axes[-1], width='5%', height='95%', loc='center right')
+        cax = inset_axes(axes[-1], width='5%', height='90%', loc='center right')
         cbar = fig.colorbar(h, cax=cax)
         cbar.ax.yaxis.set_ticks_position('left')
 

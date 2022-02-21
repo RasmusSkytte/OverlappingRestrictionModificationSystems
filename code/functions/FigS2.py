@@ -31,7 +31,7 @@ bins = np.linspace(0, 1, 6)
 panel_id = 0
 plot_id = 0
 ax_id = 0
-for strain_id, A_ij_s, Bs, genus in iter_sequence_data(A_ij, s, data_taxonomy) :
+for _, A_ij_s, Bs, genus in iter_sequence_data(A_ij, s, data_taxonomy) :
 
     # Check if new panel should be made
     if plot_id % n_plots == 0 or (panel_id == 0 and plot_id == n_cols * n_rows_first):

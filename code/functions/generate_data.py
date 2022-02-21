@@ -4,53 +4,75 @@ from tqdm import tqdm
 from p_tqdm import p_umap
 from functools import partial
 
+
 from helpers import default_parameters, make_dirs, get_path, pickle_write, simulate_original_model, simulate_extended_model, dynamical_system, get_RMs, get_solver
 
 num_cores = 3
+n_batches = 20
+
 tqdm_disable = False
 
 if num_cores > 1 :
     tqdm_disable = True
 
 
-def generateData(k, nFigS11=None, nFig5=None) :
+
+
+def generateData(k, nFigS14_S16=None, nFigS15=None, nFig5=None) :
 
     # Start with default parameters
     C, Eta, Alpha, Beta, Delta, T, lb, ub, S, f, iterations = default_parameters()
 
     data_path = get_path('data')
 
-    make_dirs(os.path.join(data_path, f'FigS11', f'iterations_1e{np.log10(iterations):.1f}'))
-    make_dirs(os.path.join(data_path,  'Fig5'))
-    make_dirs(os.path.join(data_path,  'Fig7'))
-
-
     # Check which scenario to generate data for
-    if k < np.prod(nFigS11) :
+    if k < np.prod(nFigS14_S16) + np.prod(nFigS15) :
 
-        r = k % nFigS11[0]      # Determine run
-        s = int(k / nFigS11[0]) # Determine end point
+        # Overwrite T
+        if k < np.prod(nFigS14_S16) :
+            r_div = nFigS14_S16[0]
+            t = int(k / r_div)
 
-        iterations = 1e4   # Overwrite the iterations
+            Ts = np.logspace(1, 4, nFigS14_S16[1])
+            T = Ts[t]
+
+            iterations = int(1e4)   # Overwrite the iterations
+
+        # Overwrite C
+        else :
+            r_div = nFigS15[0]
+            c = int((k - np.prod(nFigS14_S16)) / r_div) # Determine the C
+
+            Cs = np.logspace(7, 9, nFigS15[1])
+            C = Cs[c]
+
+            iterations = int(1e5)   # Overwrite the iterations
+
+        r = k % r_div      # Determine run
+        s = 0              # Determine the seed
+
+        if r in [0, 2, 3, 4] :
+            return
+
+
+        sdir = f'iterations_1e{np.log10(iterations):.0f}_T_1e{np.log10(T):.1f}_C_1e{np.log10(C):.1f}'
+        make_dirs(os.path.join(data_path, f'FigS14_S15_S16', sdir))
 
         # Set seed
         np.random.seed(s)
 
         # Define run parameters
-        sampleTimes = np.power(10, np.arange(np.log10(iterations)+1));
+        sampleTimes = np.power(10, np.arange(np.log10(iterations)+1))
 
         if r == 0 :
-            fname = os.path.join(data_path, f'FigS11', f'iterations_1e{np.log10(iterations):.1f}', f'RM_inf_seed_{s}.pkl')
+            fname = os.path.join(data_path, f'FigS14_S15_S16', sdir, f'RM_inf_seed_{s}.pkl')
             if not os.path.exists(fname) :
                 B_end, P_end, _, bacteria, phages, diversity, mRM, gamma, omega, B_samples, nRM, age, gamma_all, omega_all = simulate_original_model(Alpha, Beta, Eta, Delta, C, T, S, f, lb, ub, iterations, fname, sampleTimes, disable=tqdm_disable, solver=get_solver())
                 pickle_write(fname, B_end, P_end, bacteria, phages, diversity, mRM, gamma, omega, B_samples, nRM, age, gamma_all, omega_all, Alpha, Beta, Eta, Delta, C, T, S, f, lb, ub, iterations, sampleTimes)
 
         else :
-            if r in [3, 4, 5] :
-                return
-
-            RMs = np.arange(25 * 2**(r-1))
-            fname = os.path.join(data_path, f'FigS11', f'iterations_1e{np.log10(iterations):.1f}', f'RM_{len(RMs)}_seed_{s}.pkl')
+            RMs = np.arange(50 * 2**(r-1))
+            fname = os.path.join(data_path, f'FigS14_S15_S16', sdir, f'RM_{len(RMs)}_seed_{s}.pkl')
             if not os.path.exists(fname) :
                 B, _, B_end, P_end, _, bacteria, phages, diversity, mRM, cost, omega_0, B_samples, overlap, age, B_all = simulate_extended_model(Alpha, Beta, Eta, Delta, C, T, S, RMs, f, lb, ub, iterations, fname, sampleTimes, disable=tqdm_disable, solver=get_solver())
                 pickle_write(fname, B, B_end, P_end, bacteria, phages, diversity, mRM, cost, omega_0, B_samples, overlap, age, B_all, Alpha, Beta, Eta, Delta, C, T, S, f, lb, ub, iterations, sampleTimes)
@@ -58,10 +80,11 @@ def generateData(k, nFigS11=None, nFig5=None) :
 
 
 
-    elif k >= np.prod(nFigS11) and k < (np.prod(nFigS11) + np.prod(nFig5)) :
+    elif k >= np.prod(nFigS14_S16) + np.prod(nFigS15) and k < (np.prod(nFigS14_S16) + np.prod(nFigS15) + np.prod(nFig5)) :
 
-        k -= np.prod(nFigS11)
+        make_dirs(os.path.join(data_path,  'Fig5'))
 
+        k -= np.prod(nFigS14_S16) + np.prod(nFigS15)
 
         # Define lists to sweep over
         omega, gamma = np.meshgrid(np.power(10, np.linspace(0, -2, nFig5[0])), np.linspace(0, 1, nFig5[1]));
@@ -133,16 +156,16 @@ def generateData(k, nFigS11=None, nFig5=None) :
 
 
 # Define the number of runs for each generator
-nFigS11  = (7,  1)  # 7 different K, 1 repeats
-nFig5 = (17, 17)  # 17 x 17 phasespace
+nFigS14_S16 = (6,  4)  # 6 different K, 4 values of T
+nFigS15  = (6,  5)  # 6 different K, 5 values of C
+nFig5   = (17, 17) # 17 x 17 phasespace
 
-params = np.arange(np.prod(nFigS11) + np.prod(nFig5))
+param_space = np.arange(np.prod(nFigS14_S16) + np.prod(nFigS15) + np.prod(nFig5))
 
 # Perform maximization locally
 if num_cores == 1 :
-    for param in tqdm(params) :
-        generateData(param, nFigS11=nFigS11, nFig5=nFig5)
+    for k in tqdm(param_space) :
+        generateData(k, nFigS14_S16=nFigS14_S16, nFigS15=nFigS15, nFig5=nFig5)
 
 elif __name__ == '__main__':
-    p_umap(partial(generateData, nFigS11=nFigS11, nFig5=nFig5), params, num_cpus=num_cores)
-
+    p_umap(partial(generateData, nFigS14_S16=nFigS14_S16, nFigS15=nFigS15, nFig5=nFig5), param_space, num_cpus=num_cores)
